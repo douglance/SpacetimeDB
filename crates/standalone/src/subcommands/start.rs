@@ -297,26 +297,42 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
 /// and the actual bind will fail with a clear error if it happens.
 fn is_port_available(host: &str, port: u16) -> bool {
     // Parse the host and determine which addresses to check
-    let ipv4 = host
-        .parse::<Ipv4Addr>()
-        .unwrap_or_else(|e| panic!("Invalid IPv4 address '{}': {}", host, e));
-
-    let ipv6 = if ipv4.is_loopback() {
-        Ipv6Addr::LOCALHOST
-    } else if ipv4.is_unspecified() {
-        Ipv6Addr::UNSPECIFIED
+    let mut ipv4Addr = None;
+    let ipv6Addr;
+    
+    if let Some(ipv4) = host.parse::<Ipv4Addr>() {
+        ipv4Addr = Some(SocketAddr::from(ipv4, port));
+        ipv6Addr = SocketAddr::from(if ipv4.is_loopback() {
+            Ipv6Addr::LOCALHOST
+        } else if ipv4.is_unspecified() {
+            Ipv6Addr::UNSPECIFIED
+        } else {
+            // For specific IPs, use the IPv4-mapped IPv6 address
+            ipv4.to_ipv6_mapped()
+        }, port);    
+    } else if let Some(ipv6) = host.parse::<Ipv6Addr>() {
+        if ipv6.is_loopback() {
+            ipv4Addr = Some(SocketAddr::from(Ipv4Addr::LOCALHOST, port));
+        } else if ipv6.is_unspecified() {
+            ipv4Addr = Some(SocketAddr::from(Ipv4Addr::UNSPECIFIED, port));
+        } else {
+            // Not all Ipv6 addresses map to an Ipv4 address, so we can't
+            // assume anything here.
+            None
+        }
+        ipv6Addr = SocketAddr::from(ipv6, port)
     } else {
-        // For specific IPs, use the IPv4-mapped IPv6 address
-        ipv4.to_ipv6_mapped()
-    };
+        // Neither address is valid
+        return false;
+    }
 
-    let ipv4_addr = SocketAddr::from((ipv4, port));
-    let ipv6_addr = SocketAddr::V6(SocketAddrV6::new(ipv6, port, 0, 0));
-
-    let ipv4_available = StdTcpListener::bind(ipv4_addr).is_ok();
-    let ipv6_available = StdTcpListener::bind(ipv6_addr).is_ok();
-
-    ipv4_available && ipv6_available
+    if let Some(ipv4Addr) = ipv4Addr {
+        if !StdTcpListener::bind(ipv4_addr).is_ok() {
+            return false;
+        }
+    }
+    
+    return StdTcpListener::bind(ipv6_addr).is_ok();
 }
 
 /// Find an available port starting from the requested port.
