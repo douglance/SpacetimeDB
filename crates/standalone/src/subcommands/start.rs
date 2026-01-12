@@ -297,12 +297,12 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
 /// and the actual bind will fail with a clear error if it happens.
 fn is_port_available(host: &str, port: u16) -> bool {
     // Parse the host and determine which addresses to check
-    let mut ipv4Addr = None;
-    let ipv6Addr;
+    let mut ipv4_addr = None;
+    let ipv6_addr;
     
     if let Some(ipv4) = host.parse::<Ipv4Addr>() {
-        ipv4Addr = Some(SocketAddr::from(ipv4, port));
-        ipv6Addr = SocketAddr::from(if ipv4.is_loopback() {
+        ipv4_addr = Some(SocketAddr::from(ipv4, port));
+        ipv6_addr = SocketAddr::from(if ipv4.is_loopback() {
             Ipv6Addr::LOCALHOST
         } else if ipv4.is_unspecified() {
             Ipv6Addr::UNSPECIFIED
@@ -312,21 +312,21 @@ fn is_port_available(host: &str, port: u16) -> bool {
         }, port);    
     } else if let Some(ipv6) = host.parse::<Ipv6Addr>() {
         if ipv6.is_loopback() {
-            ipv4Addr = Some(SocketAddr::from(Ipv4Addr::LOCALHOST, port));
+            ipv4_addr = Some(SocketAddr::from(Ipv4Addr::LOCALHOST, port));
         } else if ipv6.is_unspecified() {
-            ipv4Addr = Some(SocketAddr::from(Ipv4Addr::UNSPECIFIED, port));
+            ipv4_addr = Some(SocketAddr::from(Ipv4Addr::UNSPECIFIED, port));
         } else {
             // Not all Ipv6 addresses map to an Ipv4 address, so we can't
             // assume anything here.
             None
         }
-        ipv6Addr = SocketAddr::from(ipv6, port)
+        ipv6_addr = SocketAddr::from(ipv6, port)
     } else {
         // Neither address is valid
         return false;
     }
 
-    if let Some(ipv4Addr) = ipv4Addr {
+    if let Some(ipv4_addr) = ipv4_addr {
         if !StdTcpListener::bind(ipv4_addr).is_ok() {
             return false;
         }
