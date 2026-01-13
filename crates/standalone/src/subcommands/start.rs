@@ -332,10 +332,10 @@ fn is_port_available(host: &str, port: u16) -> bool {
                 let v4_addr = SocketAddr::from((v4, port));
                 let v6_mapped = v4.to_ipv6_mapped();
                 let v6_addr = SocketAddr::V6(SocketAddrV6::new(v6_mapped, port, 0, 0));
-                return can_bind(v4_addr) && can_bind(v6_addr)
+                can_bind(v4_addr) && can_bind(v6_addr)
             } else {
                 // No special case here to test
-                return true;
+                true
             }
         }
 
@@ -346,15 +346,15 @@ fn is_port_available(host: &str, port: u16) -> bool {
                     // and check both representations.
                     let v6_addr = SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0));
                     let v4_addr = SocketAddr::from((v4, port));
-                    return can_bind(v6_addr) && can_bind(v4_addr);
+                    can_bind(v6_addr) && can_bind(v4_addr)
                 } else {
                     // specific IPv6: only that v6 address needs to be free
                     let v6_addr = SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0));
-                    return can_bind(v6_addr);
+                    can_bind(v6_addr)
                 }
             } else {
                 // No special case here to test
-                return true;
+                true
             }
         }
     }
