@@ -314,14 +314,14 @@ fn is_port_available(host: &str, port: u16) -> bool {
     // localhost: require both v4 loopback and v6 loopback free
     let v4_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let v6_addr = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0));
-    if !can_bind(v4_addr) || can_bind(v6_addr) {
+    if !can_bind(v4_addr) || !can_bind(v6_addr) {
         return false;
     }
 
     // 0.0.0.0: require "all addresses" free, including IPv6 :: on that port
     let v4_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
     let v6_addr = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0));
-    if !can_bind(v4_addr) || can_bind(v6_addr) {
+    if !can_bind(v4_addr) || !can_bind(v6_addr) {
         return false;
     }
 
