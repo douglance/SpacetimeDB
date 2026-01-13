@@ -296,43 +296,77 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
 /// another process could grab the port in between. This is unlikely in practice
 /// and the actual bind will fail with a clear error if it happens.
 fn is_port_available(host: &str, port: u16) -> bool {
-    // Parse the host and determine which addresses to check
-    let mut ipv4_addr = None;
-    let ipv6_addr;
-    
-    if let Some(ipv4) = host.parse::<Ipv4Addr>() {
-        ipv4_addr = Some(SocketAddr::from(ipv4, port));
-        ipv6_addr = SocketAddr::from(if ipv4.is_loopback() {
-            Ipv6Addr::LOCALHOST
-        } else if ipv4.is_unspecified() {
-            Ipv6Addr::UNSPECIFIED
-        } else {
-            // For specific IPs, use the IPv4-mapped IPv6 address
-            ipv4.to_ipv6_mapped()
-        }, port);    
-    } else if let Some(ipv6) = host.parse::<Ipv6Addr>() {
-        if ipv6.is_loopback() {
-            ipv4_addr = Some(SocketAddr::from(Ipv4Addr::LOCALHOST, port));
-        } else if ipv6.is_unspecified() {
-            ipv4_addr = Some(SocketAddr::from(Ipv4Addr::UNSPECIFIED, port));
-        } else {
-            // Not all Ipv6 addresses map to an Ipv4 address, so we can't
-            // assume anything here.
-            None
-        }
-        ipv6_addr = SocketAddr::from(ipv6, port)
-    } else {
-        // Neither address is valid
-        return false;
+    fn can_bind(addr: SocketAddr) -> bool {
+        StdTcpListener::bind(addr).is_ok()
     }
 
-    if let Some(ipv4_addr) = ipv4_addr {
-        if !StdTcpListener::bind(ipv4_addr).is_ok() {
-            return false;
+    // parse host because ipv4/ipv6/'localhost' are all supported
+    let ip: IpAddr = match host {
+        "localhost" => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        _ => match host.parse::<IpAddr>() {
+            Ok(ip) => ip,
+            Err(_) => {
+                // Try DNS/hosts resolution (e.g. "myhost", "localhost" on some systems)
+                // Use :0 just to get an address; port is irrelevant for resolution.
+                let mut addrs = match format!("{host}:0").to_socket_addrs() {
+                    Ok(a) => a,
+                    Err(_) => return false, // invalid/unresolvable host => treat as unavailable
+                };
+                match addrs.next() {
+                    Some(sa) => sa.ip(),
+                    None => return false,
+                }
+            }
+        },
+    };
+
+    match ip {
+        IpAddr::V4(v4) => {
+            if v4.is_loopback() {
+                // localhost: require both v4 loopback and v6 loopback free
+                let v4_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+                let v6_addr = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0));
+                can_bind(v4_addr) && can_bind(v6_addr)
+            } else if v4.is_unspecified() {
+                // 0.0.0.0: require "all addresses" free, including IPv6 :: on that port
+                let v4_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+                let v6_addr =
+                    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0));
+                can_bind(v4_addr) && can_bind(v6_addr)
+            } else {
+                // specific IPv4: check that v4 AND its corresponding v4-mapped IPv6 are free
+                let v4_addr = SocketAddr::from((v4, port));
+                let v6_mapped = v4.to_ipv6_mapped();
+                let v6_addr = SocketAddr::V6(SocketAddrV6::new(v6_mapped, port, 0, 0));
+                can_bind(v4_addr) && can_bind(v6_addr)
+            }
+        }
+
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() {
+                // ::1: require both loopbacks free
+                let v6_addr = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, port, 0, 0));
+                let v4_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+                can_bind(v6_addr) && can_bind(v4_addr)
+            } else if v6.is_unspecified() {
+                // :: (all interfaces): require v6 and v4 unspecified free
+                let v6_addr =
+                    SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0));
+                let v4_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+                can_bind(v6_addr) && can_bind(v4_addr)
+            } else if let Some(v4) = v6.to_ipv4() {
+                // v4-mapped IPv6 like ::ffff:192.168.1.1 — treat like "specific address",
+                // and check both representations.
+                let v6_addr = SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0));
+                let v4_addr = SocketAddr::from((v4, port));
+                can_bind(v6_addr) && can_bind(v4_addr)
+            } else {
+                // specific IPv6: only that v6 address needs to be free
+                let v6_addr = SocketAddr::V6(SocketAddrV6::new(v6, port, 0, 0));
+                can_bind(v6_addr)
+            }
         }
     }
-    
-    return StdTcpListener::bind(ipv6_addr).is_ok();
 }
 
 /// Find an available port starting from the requested port.
