@@ -1,7 +1,7 @@
 use spacetimedb_client_api::routes::identity::IdentityRoutes;
 use spacetimedb_pg::pg_server;
 use std::io::{self, Write};
-use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener as StdTcpListener};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener as StdTcpListener, ToSocketAddrs};
 use std::sync::Arc;
 
 use crate::{StandaloneEnv, StandaloneOptions};
