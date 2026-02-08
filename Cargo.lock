@@ -7796,6 +7796,7 @@ dependencies = [
  "spacetimedb-execution",
  "spacetimedb-expr",
  "spacetimedb-fs-utils",
+ "spacetimedb-inspector",
  "spacetimedb-jsonwebtoken",
  "spacetimedb-jwks",
  "spacetimedb-lib 2.0.0",
@@ -7965,6 +7966,20 @@ dependencies = [
  "portpicker",
  "reqwest 0.12.24",
  "tempfile",
+]
+
+[[package]]
+name = "spacetimedb-inspector"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite",
+ "v8",
 ]
 
 [[package]]
@@ -8380,6 +8395,7 @@ dependencies = [
  "spacetimedb-client-api-messages",
  "spacetimedb-core",
  "spacetimedb-datastore",
+ "spacetimedb-inspector",
  "spacetimedb-lib 2.0.0",
  "spacetimedb-paths",
  "spacetimedb-pg",

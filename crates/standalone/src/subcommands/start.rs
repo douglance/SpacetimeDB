@@ -91,6 +91,21 @@ pub fn cli() -> clap::Command {
                 .action(SetTrue)
                 .help("Run in non-interactive mode (fail immediately if port is in use)"),
         )
+        .arg(
+            Arg::new("inspect")
+                .long("inspect")
+                .value_name("PORT")
+                .help("Enable V8 inspector for TypeScript module debugging on the specified port (default: 9229)")
+                .value_parser(clap::value_parser!(u16).range(1024..65535)),
+        )
+        .arg(
+            Arg::new("inspect_brk")
+                .long("inspect-brk")
+                .value_name("PORT")
+                .conflicts_with("inspect")
+                .help("Enable V8 inspector and break before first statement (default port: 9229)")
+                .value_parser(clap::value_parser!(u16).range(1024..65535)),
+        )
     // .after_help("Run `spacetime help start` for more detailed information.")
 }
 
@@ -112,6 +127,26 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
     let listen_addr = args.get_one::<String>("listen_addr").unwrap();
     let pg_port = args.get_one::<u16>("pg_port");
     let non_interactive = args.get_flag("non_interactive");
+
+    // Parse inspector flags and enable V8 inspector if requested
+    let inspect_port = args.get_one::<u16>("inspect").copied();
+    let inspect_brk_port = args.get_one::<u16>("inspect_brk").copied();
+
+    if let Some(port) = inspect_brk_port {
+        let config = spacetimedb::host::v8::InspectorConfig::new_break_on_start(port);
+        if spacetimedb::host::v8::enable_inspector(config).is_err() {
+            log::warn!("V8 Inspector already configured, ignoring --inspect-brk flag");
+        } else {
+            log::info!("V8 Inspector enabled with --inspect-brk on port {}", port);
+        }
+    } else if let Some(port) = inspect_port {
+        let config = spacetimedb::host::v8::InspectorConfig::new(port);
+        if spacetimedb::host::v8::enable_inspector(config).is_err() {
+            log::warn!("V8 Inspector already configured, ignoring --inspect flag");
+        } else {
+            log::info!("V8 Inspector enabled on port {}", port);
+        }
+    }
     let cert_dir = args.get_one::<spacetimedb_paths::cli::ConfigDir>("jwt_key_dir");
     let certs = Option::zip(
         args.get_one::<PubKeyPath>("jwt_pub_key_path").cloned(),
@@ -188,6 +223,22 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
         db_cores,
     )
     .await?;
+
+    // Log inspector configuration if enabled
+    // The actual inspector server is started by the V8 module instance when a TypeScript
+    // module is published, ensuring the inspector is connected to the V8 context.
+    if let Some(config) = spacetimedb::host::v8::inspector_config() {
+        log::info!(
+            "V8 Inspector enabled on port {} (will start when TypeScript module is published)",
+            config.port
+        );
+        log::info!(
+            "To debug: chrome://inspect -> Configure -> {}:{}",
+            config.host,
+            config.port
+        );
+    }
+
     worker_metrics::spawn_jemalloc_stats(listen_addr.clone());
     worker_metrics::spawn_tokio_stats(listen_addr.clone());
     worker_metrics::spawn_page_pool_stats(listen_addr.clone(), ctx.page_pool().clone());

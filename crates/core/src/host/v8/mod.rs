@@ -46,7 +46,7 @@ use spacetimedb_schema::auto_migrate::MigrationPolicy;
 use spacetimedb_schema::identifier::Identifier;
 use spacetimedb_table::static_assert_size;
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 use tokio::sync::oneshot;
 use tracing::Instrument;
@@ -66,6 +66,43 @@ mod string;
 mod syscall;
 mod to_value;
 mod util;
+
+// Re-export inspector types for external use
+pub use spacetimedb_inspector::{InspectorConfig, InspectorSession};
+
+/// Global inspector configuration.
+/// Set this before starting the V8 runtime to enable debugging.
+static INSPECTOR_CONFIG: OnceLock<InspectorConfig> = OnceLock::new();
+
+/// Enable the V8 inspector with the given configuration.
+///
+/// This must be called before any V8 modules are loaded.
+/// Once set, the configuration cannot be changed.
+///
+/// # Example
+///
+/// ```ignore
+/// use spacetimedb::host::v8::{enable_inspector, InspectorConfig};
+///
+/// // Enable inspector on port 9229
+/// enable_inspector(InspectorConfig::new(9229));
+///
+/// // Or enable with break-on-start
+/// enable_inspector(InspectorConfig::new_break_on_start(9229));
+/// ```
+pub fn enable_inspector(config: InspectorConfig) -> Result<(), InspectorConfig> {
+    INSPECTOR_CONFIG.set(config)
+}
+
+/// Get the current inspector configuration, if set.
+pub fn inspector_config() -> Option<&'static InspectorConfig> {
+    INSPECTOR_CONFIG.get()
+}
+
+/// Check if the inspector is enabled.
+pub fn inspector_enabled() -> bool {
+    INSPECTOR_CONFIG.get().is_some()
+}
 
 /// The V8 runtime, for modules written in e.g., JS or TypeScript.
 #[derive(Default)]
@@ -586,6 +623,35 @@ async fn spawn_instance_worker(
 
         // Create the isolate and scope.
         let mut isolate = new_isolate();
+
+        // Initialize inspector BEFORE scope creation (critical ordering)
+        // The inspector needs &mut isolate access, and scope_with_context! borrows it for its lifetime
+        //
+        // Order of operations:
+        // 1. Start WebSocket server (async, needs tokio runtime)
+        // 2. Initialize inspector with stored broadcast_tx from server
+        // 3. Create scope and register context
+        // 4. Connect inspector session to enable breakpoints
+        let mut inspector_session = inspector_config().and_then(|config| {
+            let mut session = InspectorSession::new(config.clone());
+
+            // Start the WebSocket server first to get the broadcast_tx
+            // The session keeps its own tokio runtime alive for server tasks
+            match session.start_server_sync() {
+                Ok(()) => {
+                    // Server started successfully, initialize the inspector
+                    session.initialize(&mut isolate);
+                    Some(session)
+                }
+                Err(e) => {
+                    // Server failed to start (e.g., port already in use)
+                    // Skip inspector for this V8 instance
+                    log::warn!("Inspector disabled for this module: {}", e);
+                    None
+                }
+            }
+        });
+
         scope_with_context!(let scope, &mut isolate, Context::new(scope, Default::default()));
 
         // Setup the instance environment.
@@ -595,6 +661,15 @@ async fn spawn_instance_worker(
         };
         let instance_env = InstanceEnv::new(replica_ctx.clone(), scheduler.clone());
         scope.set_slot(JsInstanceEnv::new(instance_env));
+
+        // Register context and connect inspector before running any JS
+        // This matches the pattern used in inspector integration tests
+        if let Some(ref mut session) = inspector_session {
+            let context = scope.get_current_context();
+            session.context_created(context, "spacetimedb-module");
+            session.connect();
+            log::info!("V8 Inspector: Ready for debugging connections");
+        }
 
         catch_exception(scope, |scope| Ok(builtins::evaluate_builtins(scope)?))
             .expect("our builtin code shouldn't error");
@@ -658,7 +733,25 @@ async fn spawn_instance_worker(
                 log::error!("should have receiver for `{ctx}` response, {e}");
             }
         };
-        for request in request_rx.iter() {
+        // Use recv_timeout instead of blocking iter() to allow periodic inspector message processing.
+        // This is critical for debugger support - without it, CDP messages from the debugger
+        // would never be processed until a reducer is called.
+        let inspector_poll_interval = std::time::Duration::from_millis(50);
+        loop {
+            // Process pending inspector messages - do this on every iteration
+            // so debugger commands are handled promptly even when no requests are pending
+            if let Some(ref mut session) = inspector_session {
+                session.process_messages();
+            }
+
+            // Wait for a request with timeout - this allows us to keep processing
+            // inspector messages even when no requests are coming in
+            let request = match request_rx.recv_timeout(inspector_poll_interval) {
+                Ok(req) => req,
+                Err(flume::RecvTimeoutError::Timeout) => continue,
+                Err(flume::RecvTimeoutError::Disconnected) => break,
+            };
+
             let mut call_reducer = |tx, params| instance_common.call_reducer_with_tx(tx, params, &mut inst);
 
             core_pinner.pin_if_changed();

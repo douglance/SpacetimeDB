@@ -33,6 +33,7 @@ spacetimedb-datastore.workspace = true
 spacetimedb-lib.workspace = true
 spacetimedb-paths.workspace = true
 spacetimedb-pg.workspace = true
+spacetimedb-inspector.workspace = true
 spacetimedb-table.workspace = true
 spacetimedb-schema.workspace = true
 
