@@ -676,7 +676,14 @@ async fn spawn_instance_worker(
 
             // If --inspect-brk was used, schedule a pause before the first statement
             if inspector_config().map_or(false, |c| c.break_on_start) {
-                session.schedule_pause_on_next_statement("Break on start");
+                if session.owns_debugger_command_channel() {
+                    session.schedule_pause_on_next_statement("Break on start");
+                } else {
+                    log::debug!(
+                        "V8 Inspector: skipping --inspect-brk pause for non-owning isolate on port {}",
+                        inspector_config().map_or(9229, |c| c.port)
+                    );
+                }
             }
 
             log::info!("V8 Inspector: Ready for debugging connections");

@@ -289,6 +289,15 @@ impl InspectorSession {
         V8Session::can_dispatch_method(method_view)
     }
 
+    /// Returns true when this isolate owns inbound debugger command delivery.
+    ///
+    /// Only the owning isolate can receive commands like `Debugger.resume`.
+    /// Non-owning isolates must not use `--inspect-brk`, or they can pause
+    /// without any way to receive resume/step commands.
+    pub fn owns_debugger_command_channel(&self) -> bool {
+        self.command_owner_epoch.is_some()
+    }
+
     /// Start the WebSocket server for debugger connections.
     ///
     /// Uses a SHARED server architecture: only the first V8 isolate creates
@@ -471,6 +480,7 @@ mod tests {
         session.attach_to_shared_server(&shared);
 
         assert!(session.broadcast_tx.is_some());
+        assert!(!session.owns_debugger_command_channel());
         let owns_incoming_commands = session
             .shared_incoming_rx
             .lock()
@@ -497,6 +507,7 @@ mod tests {
 
         let mut session = InspectorSession::new(InspectorConfig::new(9229));
         session.attach_to_shared_server(&shared);
+        assert!(session.owns_debugger_command_channel());
 
         let mut incoming_guard = session
             .shared_incoming_rx
@@ -533,11 +544,7 @@ mod tests {
             let mut session = InspectorSession::new(InspectorConfig::new(port));
             b1.wait();
             let result = session.start_server_sync();
-            let owns_incoming_commands = session
-                .shared_incoming_rx
-                .lock()
-                .expect("shared_incoming_rx mutex poisoned")
-                .is_some();
+            let owns_incoming_commands = session.owns_debugger_command_channel();
             (result, owns_incoming_commands)
         });
         let b2 = barrier.clone();
@@ -545,11 +552,7 @@ mod tests {
             let mut session = InspectorSession::new(InspectorConfig::new(port));
             b2.wait();
             let result = session.start_server_sync();
-            let owns_incoming_commands = session
-                .shared_incoming_rx
-                .lock()
-                .expect("shared_incoming_rx mutex poisoned")
-                .is_some();
+            let owns_incoming_commands = session.owns_debugger_command_channel();
             (result, owns_incoming_commands)
         });
 
