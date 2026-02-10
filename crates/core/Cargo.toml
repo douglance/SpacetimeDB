@@ -34,7 +34,7 @@ spacetimedb-table.workspace = true
 spacetimedb-vm.workspace = true
 spacetimedb-snapshot.workspace = true
 spacetimedb-subscription.workspace = true
-spacetimedb-inspector.workspace = true
+spacetimedb-inspector = { workspace = true, optional = true }
 spacetimedb-expr.workspace = true
 spacetimedb-execution.workspace = true
 spacetimedb-fs-utils.workspace = true
@@ -146,6 +146,8 @@ allow_loopback_http_for_tests = []
 spacetimedb-wasm-instance-env-times = []
 # Enable test helpers and utils
 test = ["spacetimedb-commitlog/test", "spacetimedb-datastore/test"]
+# V8 Inspector for TypeScript module debugging
+inspector = ["dep:spacetimedb-inspector"]
 # Perfmaps for profiling modules
 perfmap = []
 # Disables core pinning

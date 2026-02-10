@@ -95,13 +95,17 @@ pub fn cli() -> clap::Command {
             Arg::new("inspect")
                 .long("inspect")
                 .value_name("PORT")
-                .help("Enable V8 inspector for TypeScript module debugging on the specified port (default: 9229)")
+                .default_missing_value("9229")
+                .num_args(0..=1)
+                .help("Enable V8 inspector for TypeScript module debugging (default port: 9229)")
                 .value_parser(clap::value_parser!(u16).range(1024..65535)),
         )
         .arg(
             Arg::new("inspect_brk")
                 .long("inspect-brk")
                 .value_name("PORT")
+                .default_missing_value("9229")
+                .num_args(0..=1)
                 .conflicts_with("inspect")
                 .help("Enable V8 inspector and break before first statement (default port: 9229)")
                 .value_parser(clap::value_parser!(u16).range(1024..65535)),
@@ -129,22 +133,31 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
     let non_interactive = args.get_flag("non_interactive");
 
     // Parse inspector flags and enable V8 inspector if requested
-    let inspect_port = args.get_one::<u16>("inspect").copied();
-    let inspect_brk_port = args.get_one::<u16>("inspect_brk").copied();
+    #[cfg(feature = "inspector")]
+    {
+        let inspect_port = args.get_one::<u16>("inspect").copied();
+        let inspect_brk_port = args.get_one::<u16>("inspect_brk").copied();
 
-    if let Some(port) = inspect_brk_port {
-        let config = spacetimedb::host::v8::InspectorConfig::new_break_on_start(port);
-        if spacetimedb::host::v8::enable_inspector(config).is_err() {
-            log::warn!("V8 Inspector already configured, ignoring --inspect-brk flag");
-        } else {
-            log::info!("V8 Inspector enabled with --inspect-brk on port {}", port);
+        if let Some(port) = inspect_brk_port {
+            let config = spacetimedb::host::v8::InspectorConfig::new_break_on_start(port);
+            if spacetimedb::host::v8::enable_inspector(config).is_err() {
+                log::warn!("V8 Inspector already configured, ignoring --inspect-brk flag");
+            } else {
+                log::info!("V8 Inspector enabled with --inspect-brk on port {}", port);
+            }
+        } else if let Some(port) = inspect_port {
+            let config = spacetimedb::host::v8::InspectorConfig::new(port);
+            if spacetimedb::host::v8::enable_inspector(config).is_err() {
+                log::warn!("V8 Inspector already configured, ignoring --inspect flag");
+            } else {
+                log::info!("V8 Inspector enabled on port {}", port);
+            }
         }
-    } else if let Some(port) = inspect_port {
-        let config = spacetimedb::host::v8::InspectorConfig::new(port);
-        if spacetimedb::host::v8::enable_inspector(config).is_err() {
-            log::warn!("V8 Inspector already configured, ignoring --inspect flag");
-        } else {
-            log::info!("V8 Inspector enabled on port {}", port);
+    }
+    #[cfg(not(feature = "inspector"))]
+    {
+        if args.get_one::<u16>("inspect").is_some() || args.get_one::<u16>("inspect_brk").is_some() {
+            log::warn!("V8 Inspector requested but this build was compiled without the 'inspector' feature");
         }
     }
     let cert_dir = args.get_one::<spacetimedb_paths::cli::ConfigDir>("jwt_key_dir");
@@ -227,6 +240,7 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
     // Log inspector configuration if enabled
     // The actual inspector server is started by the V8 module instance when a TypeScript
     // module is published, ensuring the inspector is connected to the V8 context.
+    #[cfg(feature = "inspector")]
     if let Some(config) = spacetimedb::host::v8::inspector_config() {
         log::info!(
             "V8 Inspector enabled on port {} (will start when TypeScript module is published)",
@@ -236,6 +250,12 @@ pub async fn exec(args: &ArgMatches, db_cores: JobCores) -> anyhow::Result<()> {
             "To debug: chrome://inspect -> Configure -> {}:{}",
             config.host,
             config.port
+        );
+        log::info!(
+            "V8 Inspector robustness: max_pending_debugger_commands={}, max_pending_command_bytes={}, overflow_policy={:?}",
+            config.max_pending_debugger_commands,
+            config.max_pending_command_bytes,
+            config.command_queue_overflow_policy
         );
     }
 

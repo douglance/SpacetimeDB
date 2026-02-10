@@ -46,7 +46,9 @@ use spacetimedb_schema::auto_migrate::MigrationPolicy;
 use spacetimedb_schema::identifier::Identifier;
 use spacetimedb_table::static_assert_size;
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, LazyLock, OnceLock};
+#[cfg(feature = "inspector")]
+use std::sync::OnceLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 use tokio::sync::oneshot;
 use tracing::Instrument;
@@ -68,10 +70,12 @@ mod to_value;
 mod util;
 
 // Re-export inspector types for external use
+#[cfg(feature = "inspector")]
 pub use spacetimedb_inspector::{InspectorConfig, InspectorSession};
 
 /// Global inspector configuration.
 /// Set this before starting the V8 runtime to enable debugging.
+#[cfg(feature = "inspector")]
 static INSPECTOR_CONFIG: OnceLock<InspectorConfig> = OnceLock::new();
 
 /// Enable the V8 inspector with the given configuration.
@@ -90,18 +94,15 @@ static INSPECTOR_CONFIG: OnceLock<InspectorConfig> = OnceLock::new();
 /// // Or enable with break-on-start
 /// enable_inspector(InspectorConfig::new_break_on_start(9229));
 /// ```
+#[cfg(feature = "inspector")]
 pub fn enable_inspector(config: InspectorConfig) -> Result<(), InspectorConfig> {
     INSPECTOR_CONFIG.set(config)
 }
 
 /// Get the current inspector configuration, if set.
+#[cfg(feature = "inspector")]
 pub fn inspector_config() -> Option<&'static InspectorConfig> {
     INSPECTOR_CONFIG.get()
-}
-
-/// Check if the inspector is enabled.
-pub fn inspector_enabled() -> bool {
-    INSPECTOR_CONFIG.get().is_some()
 }
 
 /// The V8 runtime, for modules written in e.g., JS or TypeScript.
@@ -632,6 +633,7 @@ async fn spawn_instance_worker(
         // 2. Initialize inspector with stored broadcast_tx from server
         // 3. Create scope and register context
         // 4. Connect inspector session to enable breakpoints
+        #[cfg(feature = "inspector")]
         let mut inspector_session = inspector_config().and_then(|config| {
             let mut session = InspectorSession::new(config.clone());
 
@@ -651,6 +653,8 @@ async fn spawn_instance_worker(
                 }
             }
         });
+        #[cfg(not(feature = "inspector"))]
+        let _inspector_session: Option<()> = None;
 
         scope_with_context!(let scope, &mut isolate, Context::new(scope, Default::default()));
 
@@ -664,10 +668,17 @@ async fn spawn_instance_worker(
 
         // Register context and connect inspector before running any JS
         // This matches the pattern used in inspector integration tests
+        #[cfg(feature = "inspector")]
         if let Some(ref mut session) = inspector_session {
             let context = scope.get_current_context();
             session.context_created(context, "spacetimedb-module");
             session.connect();
+
+            // If --inspect-brk was used, schedule a pause before the first statement
+            if inspector_config().map_or(false, |c| c.break_on_start) {
+                session.schedule_pause_on_next_statement("Break on start");
+            }
+
             log::info!("V8 Inspector: Ready for debugging connections");
         }
 
@@ -733,23 +744,30 @@ async fn spawn_instance_worker(
                 log::error!("should have receiver for `{ctx}` response, {e}");
             }
         };
-        // Use recv_timeout instead of blocking iter() to allow periodic inspector message processing.
-        // This is critical for debugger support - without it, CDP messages from the debugger
-        // would never be processed until a reducer is called.
-        let inspector_poll_interval = std::time::Duration::from_millis(50);
         loop {
-            // Process pending inspector messages - do this on every iteration
-            // so debugger commands are handled promptly even when no requests are pending
-            if let Some(ref mut session) = inspector_session {
-                session.process_messages();
-            }
-
-            // Wait for a request with timeout - this allows us to keep processing
-            // inspector messages even when no requests are coming in
-            let request = match request_rx.recv_timeout(inspector_poll_interval) {
+            // When the inspector feature is enabled and an inspector session is active,
+            // use polling to process CDP messages between reducer calls.
+            // When inspector is disabled or no session exists, use blocking recv (zero CPU).
+            #[cfg(feature = "inspector")]
+            let request = if inspector_session.is_some() {
+                if let Some(ref mut session) = inspector_session {
+                    session.process_messages();
+                }
+                match request_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                    Ok(req) => req,
+                    Err(flume::RecvTimeoutError::Timeout) => continue,
+                    Err(flume::RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                match request_rx.recv() {
+                    Ok(req) => req,
+                    Err(flume::RecvError::Disconnected) => break,
+                }
+            };
+            #[cfg(not(feature = "inspector"))]
+            let request = match request_rx.recv() {
                 Ok(req) => req,
-                Err(flume::RecvTimeoutError::Timeout) => continue,
-                Err(flume::RecvTimeoutError::Disconnected) => break,
+                Err(flume::RecvError::Disconnected) => break,
             };
 
             let mut call_reducer = |tx, params| instance_common.call_reducer_with_tx(tx, params, &mut inst);

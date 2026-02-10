@@ -13,10 +13,11 @@
 //! - The first isolate to start creates the server, others connect to it
 //! - This allows debugging the first/main V8 instance
 
-use crate::client::{PauseMessagePump, SpacetimeInspectorChannel, SpacetimeInspectorClient, InspectorClientConfig};
-use crate::server::{InspectorServer, InspectorServerConfig};
+use crate::client::{PauseMessagePump, SpacetimeInspectorChannel, SpacetimeInspectorClient};
+use crate::server::{CommandReceiverClaim, InspectorServer, InspectorServerConfig, SharedCommandRouter};
 use crate::InspectorConfig;
 use anyhow::Result;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::runtime::Runtime;
 use tokio::sync::{broadcast, mpsc};
@@ -26,26 +27,25 @@ use tokio::sync::{broadcast, mpsc};
 /// This ensures only ONE inspector server runs, shared across all V8 isolates.
 /// The first isolate to start the inspector creates the server, others connect to it.
 ///
-/// The `from_debugger_tx` is swappable so that when V8 workers are replaced
-/// (e.g., during module updates), the new worker can create a fresh channel
-/// and the server's connection handlers will use the new sender.
+/// Incoming debugger command ownership is stable while the current owner is
+/// alive. If that owner exits and the receiver closes, the next isolate that
+/// attaches can claim ownership by swapping in a fresh sender/receiver pair.
 struct SharedInspectorServer {
     /// Broadcast sender for outgoing CDP messages (shared by all isolates).
     broadcast_tx: broadcast::Sender<String>,
-    /// Swappable sender for incoming CDP messages (from debugger to V8).
-    /// Connection handlers clone this Arc and lock it each time they send.
-    /// New V8 isolates swap in a fresh sender when they connect.
-    from_debugger_tx: Arc<Mutex<mpsc::UnboundedSender<String>>>,
+    /// Shared router for incoming debugger commands.
+    command_router: Arc<Mutex<SharedCommandRouter>>,
     /// Keep the server thread handle alive (prevents drop).
     _server: Mutex<Option<InspectorServer>>,
 }
 
 /// Global shared server instance.
 static SHARED_SERVER: OnceLock<SharedInspectorServer> = OnceLock::new();
+/// Serializes first-time shared server initialization to avoid startup races.
+static SHARED_SERVER_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 use v8::inspector::{
-    Channel, StringView, V8Inspector, V8InspectorClient, V8InspectorClientTrustLevel,
-    V8InspectorSession as V8Session,
+    Channel, StringView, V8Inspector, V8InspectorClient, V8InspectorClientTrustLevel, V8InspectorSession as V8Session,
 };
 use v8::{Context, Isolate, Local};
 
@@ -75,11 +75,81 @@ pub struct InspectorSession {
     /// Reference to the pause pump for setting the session pointer after connect.
     pause_pump: Option<Arc<Mutex<Option<PauseMessagePump>>>>,
 
+    /// Shared atomic pointer to the V8InspectorSession, used by the pause pump.
+    /// Nulled in `Drop` BEFORE the session is dropped.
+    session_ptr: Arc<AtomicPtr<V8Session>>,
+
+    /// Ownership epoch when this isolate owns inbound debugger commands.
+    command_owner_epoch: Option<u64>,
+
     /// Configuration.
     config: InspectorConfig,
 }
 
 impl InspectorSession {
+    fn apply_command_receiver_claim(&mut self, claim: CommandReceiverClaim) {
+        let drained = claim.drained_count;
+        self.command_owner_epoch = Some(claim.epoch);
+        if let Ok(mut my_guard) = self.shared_incoming_rx.lock() {
+            *my_guard = Some(claim.receiver);
+        }
+        if drained > 0 {
+            log::info!(
+                "V8 Inspector: claimed command channel epoch={} with {} queued commands",
+                claim.epoch,
+                drained
+            );
+        } else {
+            log::info!("V8 Inspector: claimed command channel epoch={}", claim.epoch);
+        }
+    }
+
+    fn release_command_channel_ownership(&mut self) {
+        let Some(epoch) = self.command_owner_epoch.take() else {
+            return;
+        };
+
+        if let Ok(mut guard) = self.shared_incoming_rx.lock() {
+            *guard = None;
+        }
+
+        if let Some(shared) = SHARED_SERVER.get() {
+            if let Ok(mut router) = shared.command_router.lock() {
+                if router.release_if_owner(epoch) {
+                    let stats = router.stats();
+                    log::info!(
+                        "V8 Inspector: released command channel epoch={} (routed={}, enqueued={}, dropped={})",
+                        epoch,
+                        stats.routed_total,
+                        stats.enqueued_total,
+                        stats.dropped_total
+                    );
+                }
+            }
+        }
+    }
+
+    fn attach_to_shared_server(&mut self, shared: &SharedInspectorServer) {
+        log::info!(
+            "V8 Inspector: Connecting to existing shared server on port {}",
+            self.config.port
+        );
+        let claimed = shared
+            .command_router
+            .lock()
+            .expect("command router mutex poisoned")
+            .claim_receiver_if_needed();
+        if let Some(claim) = claimed {
+            self.apply_command_receiver_claim(claim);
+        } else {
+            self.command_owner_epoch = None;
+            if let Ok(mut my_guard) = self.shared_incoming_rx.lock() {
+                *my_guard = None;
+            }
+        }
+        self.broadcast_tx = Some(shared.broadcast_tx.clone());
+    }
+
     /// Create a new inspector session with the given configuration.
     pub fn new(config: InspectorConfig) -> Self {
         Self {
@@ -88,6 +158,8 @@ impl InspectorSession {
             broadcast_tx: None,
             shared_incoming_rx: Arc::new(Mutex::new(None)),
             pause_pump: None,
+            session_ptr: Arc::new(AtomicPtr::new(std::ptr::null_mut())),
+            command_owner_epoch: None,
             config,
         }
     }
@@ -105,12 +177,9 @@ impl InspectorSession {
             tx
         });
 
-        let client_config = InspectorClientConfig {
-            break_on_start: self.config.break_on_start,
-        };
-        let client_impl = SpacetimeInspectorClient::new(client_config, broadcast_tx.clone());
+        let client_impl = SpacetimeInspectorClient::new(self.config.break_on_start, broadcast_tx.clone());
 
-        let pump = PauseMessagePump::new(self.shared_incoming_rx.clone());
+        let pump = PauseMessagePump::new(self.shared_incoming_rx.clone(), self.session_ptr.clone());
         client_impl.set_pause_pump(pump);
 
         self.pause_pump = Some(client_impl.pause_pump());
@@ -172,30 +241,25 @@ impl InspectorSession {
                 V8InspectorClientTrustLevel::FullyTrusted,
             );
 
-            // IMPORTANT: Move session into self.session FIRST, then take the pointer.
-            // The raw pointer must point to the session's final resting place (inside self),
-            // not a temporary stack variable that will be invalidated after the move.
+            // Store session in its final location first.
             self.session = Some(session);
             log::info!("Inspector session connected");
 
-            // Now set the session pointer on the pause pump from the stored location
-            if let Some(ref pump_arc) = self.pause_pump {
-                if let Ok(mut pump_guard) = pump_arc.lock() {
-                    if let Some(ref mut pump) = *pump_guard {
-                        if let Some(ref session) = self.session {
-                            // Safety: The session is owned by self and will outlive the pump
-                            unsafe {
-                                pump.set_session(session);
-                            }
-                        }
-                    }
-                }
+            // Set the session pointer via the shared AtomicPtr.
+            // The pointer points into `self.session` which is pinned for the
+            // lifetime of this `InspectorSession`.
+            if let Some(ref session) = self.session {
+                let ptr = session as *const V8Session as *mut V8Session;
+                self.session_ptr.store(ptr, Ordering::Release);
             }
         }
     }
 
     /// Disconnect the debugging session.
     pub fn disconnect(&mut self) {
+        // Null the shared pointer BEFORE dropping the session.
+        self.session_ptr.store(std::ptr::null_mut(), Ordering::Release);
+        self.release_command_channel_ownership();
         self.session = None;
         log::info!("Inspector session disconnected");
     }
@@ -234,26 +298,21 @@ impl InspectorSession {
     /// conflicts with V8's event loop. The broadcast channel allows
     /// communication between the server thread and the V8 thread.
     pub fn start_server_sync(&mut self) -> Result<()> {
+        let init_lock = SHARED_SERVER_INIT_LOCK.get_or_init(|| Mutex::new(()));
+        let _init_guard = init_lock.lock().expect("shared server init mutex poisoned");
+
         // Check if a shared server already exists
         if let Some(shared) = SHARED_SERVER.get() {
-            log::info!("V8 Inspector: Connecting to existing shared server on port {}", self.config.port);
-            self.broadcast_tx = Some(shared.broadcast_tx.clone());
-
-            // Create a fresh channel and swap the sender in the shared server
-            let (new_tx, new_rx) = mpsc::unbounded_channel::<String>();
-            {
-                let mut guard = shared.from_debugger_tx.lock().unwrap();
-                *guard = new_tx;
-            }
-            if let Ok(mut my_guard) = self.shared_incoming_rx.lock() {
-                *my_guard = Some(new_rx);
-            }
+            self.attach_to_shared_server(shared);
             return Ok(());
         }
 
         let server_config = InspectorServerConfig {
             host: self.config.host.clone(),
             port: self.config.port,
+            max_pending_debugger_commands: self.config.max_pending_debugger_commands,
+            max_pending_command_bytes: self.config.max_pending_command_bytes,
+            command_queue_overflow_policy: self.config.command_queue_overflow_policy,
         };
 
         let (result_tx, result_rx) = std::sync::mpsc::channel();
@@ -271,8 +330,8 @@ impl InspectorSession {
             rt.block_on(async {
                 let mut server = InspectorServer::new(server_config);
                 match server.start().await {
-                    Ok((broadcast_tx, shared_tx, from_debugger_rx)) => {
-                        let _ = result_tx.send(Ok((broadcast_tx, shared_tx, from_debugger_rx, server)));
+                    Ok((broadcast_tx, shared_router, initial_claim)) => {
+                        let _ = result_tx.send(Ok((broadcast_tx, shared_router, initial_claim, server)));
                         // Keep the runtime and server alive
                         loop {
                             tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
@@ -285,36 +344,25 @@ impl InspectorSession {
             });
         });
 
-        let (broadcast_tx, shared_tx, from_debugger_rx, server) = result_rx
+        let (broadcast_tx, shared_router, initial_claim, server) = result_rx
             .recv_timeout(std::time::Duration::from_secs(5))
             .map_err(|_| anyhow::anyhow!("Timeout waiting for inspector server"))??;
 
         let shared = SharedInspectorServer {
             broadcast_tx: broadcast_tx.clone(),
-            from_debugger_tx: shared_tx,
+            command_router: shared_router,
             _server: Mutex::new(Some(server)),
         };
 
         if SHARED_SERVER.set(shared).is_ok() {
             log::info!("V8 Inspector: Created shared server on port {}", self.config.port);
             self.broadcast_tx = Some(broadcast_tx);
-
-            if let Ok(mut my_guard) = self.shared_incoming_rx.lock() {
-                *my_guard = Some(from_debugger_rx);
-            }
+            self.apply_command_receiver_claim(initial_claim);
         } else {
             // Another thread beat us - use their shared server instead
             log::info!("V8 Inspector: Another isolate created the shared server first");
             if let Some(shared) = SHARED_SERVER.get() {
-                self.broadcast_tx = Some(shared.broadcast_tx.clone());
-                let (new_tx, new_rx) = mpsc::unbounded_channel::<String>();
-                {
-                    let mut guard = shared.from_debugger_tx.lock().unwrap();
-                    *guard = new_tx;
-                }
-                if let Ok(mut my_guard) = self.shared_incoming_rx.lock() {
-                    *my_guard = Some(new_rx);
-                }
+                self.attach_to_shared_server(shared);
             }
         }
 
@@ -329,7 +377,10 @@ impl InspectorSession {
             if let Some(ref mut rx) = *guard {
                 let mut msgs = Vec::new();
                 while let Ok(message) = rx.try_recv() {
-                    log::debug!("Inspector: received CDP message: {}", &message[..message.len().min(200)]);
+                    log::debug!(
+                        "Inspector: received CDP message: {}",
+                        &message[..message.len().min(200)]
+                    );
                     msgs.push(message);
                 }
                 msgs
@@ -360,9 +411,14 @@ impl InspectorSession {
 /// Custom Drop implementation to ensure proper cleanup order.
 ///
 /// The V8InspectorSession internally holds a reference to the V8Inspector.
-/// We must drop the session before the inspector to avoid dangling pointers.
+/// We must null the shared pointer and drop the session before the inspector
+/// to avoid dangling pointers.
 impl Drop for InspectorSession {
     fn drop(&mut self) {
+        // Null the shared AtomicPtr BEFORE dropping the session so the
+        // PauseMessagePump never dereferences a dangling pointer.
+        self.session_ptr.store(std::ptr::null_mut(), Ordering::Release);
+        self.release_command_channel_ownership();
         // Drop session first - it references the inspector
         self.session = None;
         self.inspector = None;
@@ -372,6 +428,17 @@ impl Drop for InspectorSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
+
+    static START_SERVER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn find_unused_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("should bind to an ephemeral port");
+        listener
+            .local_addr()
+            .expect("listener should have a local address")
+            .port()
+    }
 
     #[test]
     fn test_session_creation() {
@@ -386,5 +453,126 @@ mod tests {
         assert!(InspectorSession::can_dispatch_method("Debugger.enable"));
         assert!(InspectorSession::can_dispatch_method("Runtime.enable"));
         assert!(InspectorSession::can_dispatch_method("Debugger.setBreakpointByUrl"));
+    }
+
+    #[test]
+    fn test_attach_to_shared_server_does_not_steal_live_command_channel() {
+        let (broadcast_tx, _) = broadcast::channel::<String>(16);
+        let config = InspectorServerConfig::default();
+        let (router, initial_claim) = SharedCommandRouter::new(&config);
+        let _keep_initial_receiver_live = initial_claim.receiver;
+        let shared = SharedInspectorServer {
+            broadcast_tx,
+            command_router: Arc::new(Mutex::new(router)),
+            _server: Mutex::new(None),
+        };
+
+        let mut session = InspectorSession::new(InspectorConfig::new(9229));
+        session.attach_to_shared_server(&shared);
+
+        assert!(session.broadcast_tx.is_some());
+        let owns_incoming_commands = session
+            .shared_incoming_rx
+            .lock()
+            .expect("shared_incoming_rx mutex poisoned")
+            .is_some();
+        assert!(
+            !owns_incoming_commands,
+            "attaching isolate should not steal command ownership while channel is live"
+        );
+    }
+
+    #[test]
+    fn test_attach_to_shared_server_claims_closed_command_channel() {
+        let (broadcast_tx, _) = broadcast::channel::<String>(16);
+        let config = InspectorServerConfig::default();
+        let (router, initial_claim) = SharedCommandRouter::new(&config);
+        drop(initial_claim.receiver);
+
+        let shared = SharedInspectorServer {
+            broadcast_tx,
+            command_router: Arc::new(Mutex::new(router)),
+            _server: Mutex::new(None),
+        };
+
+        let mut session = InspectorSession::new(InspectorConfig::new(9229));
+        session.attach_to_shared_server(&shared);
+
+        let mut incoming_guard = session
+            .shared_incoming_rx
+            .lock()
+            .expect("shared_incoming_rx mutex poisoned");
+        let incoming_rx = incoming_guard
+            .as_mut()
+            .expect("session should claim command channel when shared channel is closed");
+
+        {
+            let mut router = shared.command_router.lock().expect("command router mutex poisoned");
+            let _ = router.route_command("Debugger.resume".to_string());
+        }
+
+        let msg = incoming_rx
+            .try_recv()
+            .expect("claimed receiver should get debugger command");
+        assert_eq!(msg, "Debugger.resume");
+    }
+
+    #[test]
+    fn test_start_server_sync_concurrent_calls_succeed_with_single_command_owner() {
+        let _test_guard = START_SERVER_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("start server test mutex poisoned");
+
+        let shared_server_existed = SHARED_SERVER.get().is_some();
+        let port = find_unused_port();
+        let barrier = Arc::new(Barrier::new(2));
+
+        let b1 = barrier.clone();
+        let thread1 = std::thread::spawn(move || {
+            let mut session = InspectorSession::new(InspectorConfig::new(port));
+            b1.wait();
+            let result = session.start_server_sync();
+            let owns_incoming_commands = session
+                .shared_incoming_rx
+                .lock()
+                .expect("shared_incoming_rx mutex poisoned")
+                .is_some();
+            (result, owns_incoming_commands)
+        });
+        let b2 = barrier.clone();
+        let thread2 = std::thread::spawn(move || {
+            let mut session = InspectorSession::new(InspectorConfig::new(port));
+            b2.wait();
+            let result = session.start_server_sync();
+            let owns_incoming_commands = session
+                .shared_incoming_rx
+                .lock()
+                .expect("shared_incoming_rx mutex poisoned")
+                .is_some();
+            (result, owns_incoming_commands)
+        });
+
+        let (result1, owns_commands1) = thread1.join().expect("thread1 should complete");
+        let (result2, owns_commands2) = thread2.join().expect("thread2 should complete");
+
+        assert!(
+            result1.is_ok(),
+            "first concurrent startup should succeed: {:?}",
+            result1.err()
+        );
+        assert!(
+            result2.is_ok(),
+            "second concurrent startup should succeed: {:?}",
+            result2.err()
+        );
+
+        let owner_count = usize::from(owns_commands1) + usize::from(owns_commands2);
+        if !shared_server_existed {
+            assert!(
+                owner_count >= 1,
+                "when creating a new shared server, at least one isolate should own incoming debugger commands"
+            );
+        }
     }
 }

@@ -3,27 +3,10 @@
 //! This module provides the `InspectorClient` which implements the V8
 //! inspector client interface for SpacetimeDB.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
-use v8::inspector::{
-    ChannelImpl, StringBuffer, StringView, V8InspectorClientImpl, V8InspectorSession, V8StackTrace,
-};
-
-/// Configuration for the inspector client.
-#[derive(Debug, Clone)]
-pub struct InspectorClientConfig {
-    /// Whether to break on the first statement.
-    pub break_on_start: bool,
-}
-
-impl Default for InspectorClientConfig {
-    fn default() -> Self {
-        Self {
-            break_on_start: false,
-        }
-    }
-}
+use v8::inspector::{ChannelImpl, StringBuffer, StringView, V8InspectorClientImpl, V8InspectorSession, V8StackTrace};
 
 /// Shared state for message processing during pause.
 /// This allows the client to dispatch CDP messages while V8 is paused.
@@ -31,33 +14,34 @@ pub struct PauseMessagePump {
     /// Receiver for incoming CDP messages from the debugger (shared with session).
     incoming_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<String>>>>,
     /// Reference to the V8 inspector session for dispatching messages.
-    /// We use a raw pointer because the session lifetime is managed by InspectorSession.
-    /// Safety: This is only accessed from the V8 thread during run_message_loop_on_pause.
-    session_ptr: *const V8InspectorSession,
+    /// Uses `AtomicPtr` so the pointer can be nulled on drop from any thread.
+    /// Safety: The pointed-to `V8InspectorSession` is pinned inside `InspectorSession`
+    /// and is only dereferenced from the V8 thread during `run_message_loop_on_pause`.
+    /// The `AtomicPtr` is nulled in `InspectorSession::drop` BEFORE the session is dropped.
+    session_ptr: Arc<AtomicPtr<V8InspectorSession>>,
 }
 
-// Safety: PauseMessagePump is only used from the V8 thread
+// Safety: `session_ptr` is an `AtomicPtr` (inherently Send+Sync) and is only
+// dereferenced from the V8 thread. `incoming_rx` is protected by a `Mutex`.
 unsafe impl Send for PauseMessagePump {}
 unsafe impl Sync for PauseMessagePump {}
 
 impl PauseMessagePump {
-    /// Create a new pause message pump with a shared receiver.
-    pub fn new(incoming_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<String>>>>) -> Self {
+    /// Create a new pause message pump with a shared receiver and an atomic session pointer.
+    pub fn new(
+        incoming_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<String>>>>,
+        session_ptr: Arc<AtomicPtr<V8InspectorSession>>,
+    ) -> Self {
         Self {
             incoming_rx,
-            session_ptr: std::ptr::null(),
+            session_ptr,
         }
-    }
-
-    /// Set the session pointer. Must be called before using process_messages.
-    /// Safety: The session must outlive the pump.
-    pub unsafe fn set_session(&mut self, session: &V8InspectorSession) {
-        self.session_ptr = session as *const V8InspectorSession;
     }
 
     /// Process any pending CDP messages by dispatching them to V8.
     pub fn process_messages(&mut self) {
-        if self.session_ptr.is_null() {
+        let ptr = self.session_ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
             log::trace!("PauseMessagePump: session_ptr is null, skipping");
             return;
         }
@@ -66,11 +50,16 @@ impl PauseMessagePump {
         if let Ok(mut guard) = self.incoming_rx.try_lock() {
             if let Some(ref mut rx) = *guard {
                 while let Ok(message) = rx.try_recv() {
-                    log::debug!("PauseMessagePump: dispatching CDP message: {}", &message[..message.len().min(200)]);
+                    log::debug!(
+                        "PauseMessagePump: dispatching CDP message: {}",
+                        &message[..message.len().min(200)]
+                    );
                     let message_view = StringView::from(message.as_bytes());
-                    // Safety: We're on the V8 thread and the session is valid during pause
+                    // Safety: We're on the V8 thread and the session is valid during pause.
+                    // The pointer is set in `InspectorSession::connect()` after the session
+                    // is stored in its final location and is nulled before the session is dropped.
                     unsafe {
-                        (*self.session_ptr).dispatch_protocol_message(message_view);
+                        (*ptr).dispatch_protocol_message(message_view);
                     }
                     log::debug!("PauseMessagePump: dispatch complete");
                 }
@@ -90,16 +79,13 @@ impl PauseMessagePump {
 ///
 /// - `run_message_loop_on_pause`: Blocks reducer execution while paused
 /// - `quit_message_loop_on_pause`: Resumes execution when debugger continues
-/// - `console_api_message`: Routes console.log/warn/error to the debugger
+/// - `console_api_message`: Routes console.log/warn/error to SpacetimeDB logging
 pub struct SpacetimeInspectorClient {
     /// Signal to block execution while debugger is paused.
     paused: AtomicBool,
 
     /// Signal to quit the message loop.
     should_quit: AtomicBool,
-
-    /// Broadcast sender for outgoing CDP messages to connected debuggers.
-    message_tx: broadcast::Sender<String>,
 
     /// Whether to break on the first statement.
     break_on_start: bool,
@@ -110,15 +96,11 @@ pub struct SpacetimeInspectorClient {
 
 impl SpacetimeInspectorClient {
     /// Create a new inspector client.
-    pub fn new(
-        config: InspectorClientConfig,
-        message_tx: broadcast::Sender<String>,
-    ) -> Self {
+    pub fn new(break_on_start: bool, _message_tx: broadcast::Sender<String>) -> Self {
         Self {
             paused: AtomicBool::new(false),
             should_quit: AtomicBool::new(false),
-            message_tx,
-            break_on_start: config.break_on_start,
+            break_on_start,
             pause_pump: Arc::new(Mutex::new(None)),
         }
     }
@@ -139,16 +121,6 @@ impl SpacetimeInspectorClient {
     /// Check if execution should break on start.
     pub fn should_break_on_start(&self) -> bool {
         self.break_on_start
-    }
-
-    /// Check if currently paused.
-    pub fn is_paused(&self) -> bool {
-        self.paused.load(Ordering::SeqCst)
-    }
-
-    /// Signal to quit the message loop (resume execution).
-    pub fn signal_quit(&self) {
-        self.should_quit.store(true, Ordering::SeqCst);
     }
 }
 
@@ -187,11 +159,14 @@ impl V8InspectorClientImpl for SpacetimeInspectorClient {
     fn run_if_waiting_for_debugger(&self, _context_group_id: i32) {
         if self.break_on_start {
             log::info!("V8 Inspector: Waiting for debugger to connect...");
-            // This would be called if we want to wait before first execution
         }
     }
 
     /// Called when console.log/warn/error is invoked in the module.
+    ///
+    /// Routes to SpacetimeDB's logging system. V8 already sends
+    /// `Runtime.consoleAPICalled` CDP events through the inspector channel,
+    /// so we do NOT emit duplicate CDP messages here.
     fn console_api_message(
         &self,
         _context_group_id: i32,
@@ -202,7 +177,6 @@ impl V8InspectorClientImpl for SpacetimeInspectorClient {
         column_number: u32,
         _stack_trace: &mut V8StackTrace,
     ) {
-        // Convert level to string
         let level_str = match level {
             0 => "log",
             1 => "debug",
@@ -212,48 +186,7 @@ impl V8InspectorClientImpl for SpacetimeInspectorClient {
             _ => "log",
         };
 
-        // Route to SpacetimeDB's logging system
-        let msg = message.to_string();
-        let url_str = url.to_string();
-
-        log::debug!(
-            "[{}:{}:{}] {}: {}",
-            url_str,
-            line_number,
-            column_number,
-            level_str,
-            msg
-        );
-
-        // Also send to connected debuggers via CDP Runtime.consoleAPICalled
-        let cdp_message = serde_json::json!({
-            "method": "Runtime.consoleAPICalled",
-            "params": {
-                "type": level_str,
-                "args": [{
-                    "type": "string",
-                    "value": msg
-                }],
-                "executionContextId": 1,
-                "timestamp": std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs_f64())
-                    .unwrap_or(0.0),
-                "stackTrace": {
-                    "callFrames": [{
-                        "functionName": "",
-                        "scriptId": "0",
-                        "url": url_str,
-                        "lineNumber": line_number,
-                        "columnNumber": column_number
-                    }]
-                }
-            }
-        });
-
-        if let Ok(json) = serde_json::to_string(&cdp_message) {
-            let _ = self.message_tx.send(json);
-        }
+        log::debug!("[{}:{}:{}] {}: {}", url, line_number, column_number, level_str, message);
     }
 }
 
@@ -303,19 +236,14 @@ mod tests {
     #[test]
     fn test_inspector_client_creation() {
         let (tx, _rx) = broadcast::channel(16);
-        let config = InspectorClientConfig::default();
-        let client = SpacetimeInspectorClient::new(config, tx);
-        assert!(!client.is_paused());
+        let client = SpacetimeInspectorClient::new(false, tx);
         assert!(!client.should_break_on_start());
     }
 
     #[test]
     fn test_inspector_client_break_on_start() {
         let (tx, _rx) = broadcast::channel(16);
-        let config = InspectorClientConfig {
-            break_on_start: true,
-        };
-        let client = SpacetimeInspectorClient::new(config, tx);
+        let client = SpacetimeInspectorClient::new(true, tx);
         assert!(client.should_break_on_start());
     }
 }

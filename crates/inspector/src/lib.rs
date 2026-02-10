@@ -44,9 +44,24 @@ mod client;
 mod server;
 mod session;
 
-pub use client::{SpacetimeInspectorClient, SpacetimeInspectorChannel, InspectorClientConfig, PauseMessagePump};
+pub use client::{PauseMessagePump, SpacetimeInspectorChannel, SpacetimeInspectorClient};
 pub use server::{InspectorServer, InspectorServerConfig};
 pub use session::InspectorSession;
+
+/// Overflow behavior for queued inbound debugger commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandQueueOverflowPolicy {
+    /// Drop oldest queued commands until the new command fits.
+    DropOldestWithWarn,
+    /// Drop the newest incoming command when the queue is full.
+    DropNewestWithWarn,
+}
+
+impl Default for CommandQueueOverflowPolicy {
+    fn default() -> Self {
+        Self::DropOldestWithWarn
+    }
+}
 
 /// Configuration for enabling V8 inspector debugging.
 #[derive(Debug, Clone)]
@@ -59,6 +74,15 @@ pub struct InspectorConfig {
 
     /// Host to bind the inspector server to.
     pub host: String,
+
+    /// Maximum number of inbound debugger commands queued when no active receiver exists.
+    pub max_pending_debugger_commands: usize,
+
+    /// Maximum total bytes of inbound debugger commands queued when no active receiver exists.
+    pub max_pending_command_bytes: usize,
+
+    /// Behavior when the pending inbound command queue reaches capacity.
+    pub command_queue_overflow_policy: CommandQueueOverflowPolicy,
 }
 
 impl Default for InspectorConfig {
@@ -67,6 +91,9 @@ impl Default for InspectorConfig {
             port: 9229,
             break_on_start: false,
             host: "127.0.0.1".to_string(),
+            max_pending_debugger_commands: 256,
+            max_pending_command_bytes: 1024 * 1024,
+            command_queue_overflow_policy: CommandQueueOverflowPolicy::DropOldestWithWarn,
         }
     }
 }
