@@ -17,7 +17,7 @@ use crate::client::{PauseMessagePump, SpacetimeInspectorChannel, SpacetimeInspec
 use crate::server::{CommandReceiverClaim, InspectorServer, InspectorServerConfig, SharedCommandRouter};
 use crate::InspectorConfig;
 use anyhow::Result;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::runtime::Runtime;
 use tokio::sync::{broadcast, mpsc};
@@ -307,6 +307,7 @@ impl InspectorSession {
     /// conflicts with V8's event loop. The broadcast channel allows
     /// communication between the server thread and the V8 thread.
     pub fn start_server_sync(&mut self) -> Result<()> {
+        let startup_timeout = std::time::Duration::from_secs(5);
         let init_lock = SHARED_SERVER_INIT_LOCK.get_or_init(|| Mutex::new(()));
         let _init_guard = init_lock.lock().expect("shared server init mutex poisoned");
 
@@ -325,6 +326,8 @@ impl InspectorSession {
         };
 
         let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let startup_cancelled = Arc::new(AtomicBool::new(false));
+        let startup_cancelled_thread = startup_cancelled.clone();
 
         // Spawn a dedicated thread for the inspector server
         let _server_thread = std::thread::spawn(move || {
@@ -337,13 +340,27 @@ impl InspectorSession {
             };
 
             rt.block_on(async {
+                if startup_cancelled_thread.load(Ordering::Acquire) {
+                    return;
+                }
                 let mut server = InspectorServer::new(server_config);
                 match server.start().await {
                     Ok((broadcast_tx, shared_router, initial_claim)) => {
-                        let _ = result_tx.send(Ok((broadcast_tx, shared_router, initial_claim, server)));
-                        // Keep the runtime and server alive
-                        loop {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+                        if result_tx
+                            .send(Ok((broadcast_tx, shared_router, initial_claim, server)))
+                            .is_err()
+                        {
+                            log::warn!(
+                                "V8 Inspector: startup receiver dropped before shared registration completed"
+                            );
+                            return;
+                        }
+
+                        // Keep the runtime alive while startup is still in-flight.
+                        // If startup times out, the caller flips `startup_cancelled` to
+                        // terminate this thread and avoid leaking it.
+                        while !startup_cancelled_thread.load(Ordering::Acquire) {
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                         }
                     }
                     Err(e) => {
@@ -353,9 +370,28 @@ impl InspectorSession {
             });
         });
 
-        let (broadcast_tx, shared_router, initial_claim, server) = result_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .map_err(|_| anyhow::anyhow!("Timeout waiting for inspector server"))??;
+        let startup_result = result_rx.recv_timeout(startup_timeout);
+        let (broadcast_tx, shared_router, initial_claim, server) = match startup_result {
+            Ok(result) => result?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                startup_cancelled.store(true, Ordering::Release);
+                if let Some(shared) = SHARED_SERVER.get() {
+                    self.attach_to_shared_server(shared);
+                    return Ok(());
+                }
+                return Err(anyhow::anyhow!("Timeout waiting for inspector server"));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                startup_cancelled.store(true, Ordering::Release);
+                if let Some(shared) = SHARED_SERVER.get() {
+                    self.attach_to_shared_server(shared);
+                    return Ok(());
+                }
+                return Err(anyhow::anyhow!(
+                    "Inspector server startup thread terminated before reporting readiness"
+                ));
+            }
+        };
 
         let shared = SharedInspectorServer {
             broadcast_tx: broadcast_tx.clone(),
@@ -368,6 +404,7 @@ impl InspectorSession {
             self.broadcast_tx = Some(broadcast_tx);
             self.apply_command_receiver_claim(initial_claim);
         } else {
+            startup_cancelled.store(true, Ordering::Release);
             // Another thread beat us - use their shared server instead
             log::info!("V8 Inspector: Another isolate created the shared server first");
             if let Some(shared) = SHARED_SERVER.get() {

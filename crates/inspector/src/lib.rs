@@ -49,18 +49,13 @@ pub use server::{InspectorServer, InspectorServerConfig};
 pub use session::InspectorSession;
 
 /// Overflow behavior for queued inbound debugger commands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CommandQueueOverflowPolicy {
     /// Drop oldest queued commands until the new command fits.
+    #[default]
     DropOldestWithWarn,
     /// Drop the newest incoming command when the queue is full.
     DropNewestWithWarn,
-}
-
-impl Default for CommandQueueOverflowPolicy {
-    fn default() -> Self {
-        Self::DropOldestWithWarn
-    }
 }
 
 /// Configuration for enabling V8 inspector debugging.

@@ -752,11 +752,14 @@ async fn spawn_instance_worker(
             }
         };
         loop {
-            // When the inspector feature is enabled and an inspector session is active,
-            // use polling to process CDP messages between reducer calls.
-            // When inspector is disabled or no session exists, use blocking recv (zero CPU).
+            // When the inspector feature is enabled and this isolate owns inbound
+            // debugger commands, use polling to process CDP messages between
+            // reducer calls. Non-owning isolates use blocking recv (zero CPU).
             #[cfg(feature = "inspector")]
-            let request = if inspector_session.is_some() {
+            let request = if inspector_session
+                .as_ref()
+                .map_or(false, |session| session.owns_debugger_command_channel())
+            {
                 if let Some(ref mut session) = inspector_session {
                     session.process_messages();
                 }
