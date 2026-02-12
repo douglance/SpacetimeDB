@@ -1,0 +1,7 @@
+{
+  "title": "Migrations",
+  "pages": [
+    "00200-automatic-migrations",
+    "00300-incremental-migrations"
+  ]
+}

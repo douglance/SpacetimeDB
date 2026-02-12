@@ -1,4 +1,5 @@
 ---
+title: SATS-JSON Data Format
 slug: /sats-json
 ---
 

@@ -1,0 +1,8 @@
+{
+  "title": "Internals",
+  "pages": [
+    "00100-module-abi-reference",
+    "00200-sats-json",
+    "00300-bsatn"
+  ]
+}

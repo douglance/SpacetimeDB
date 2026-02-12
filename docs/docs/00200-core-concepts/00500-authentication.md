@@ -1,3 +1,7 @@
+---
+title: Authentication
+---
+
 # Authentication
 
 SpacetimeDB modules are exposed to the open internet and anyone can connect to

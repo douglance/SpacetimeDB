@@ -1,4 +1,5 @@
 ---
+title: Appendix
 slug: /reference/appendix
 ---
 

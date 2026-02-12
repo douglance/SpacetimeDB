@@ -1,0 +1,504 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@source '../../../node_modules/fumadocs-ui/dist/**/*.js';
+
+/* Import shared brand colors, font imports, and typography (px-to-rem vars, .text-* classes).
+   custom.css imports typography.css transitively. */
+@import '../css/custom.css';
+
+/* ==========================================================================
+   Fumadocs theme overrides -- map brand colors to Fumadocs CSS variables
+   ========================================================================== */
+
+@theme {
+  --color-fd-background: #060606;
+  --color-fd-foreground: #b6c0cf;
+  --color-fd-primary: #4cf490;
+  --color-fd-primary-foreground: #060606;
+  --color-fd-card: #0d0d0e;
+  --color-fd-muted: #363840;
+  --color-fd-muted-foreground: #6f7987;
+  --color-fd-border: rgba(244, 246, 252, 0.11);
+  --color-fd-accent: #141416;
+  --color-fd-accent-foreground: #e6e9f0;
+  --color-fd-popover: #0d0d0e;
+  --color-fd-popover-foreground: #b6c0cf;
+  --color-fd-secondary: #141416;
+  --color-fd-secondary-foreground: #ced3e0;
+  --color-fd-ring: #4cf490;
+}
+
+.dark {
+  --color-fd-background: #060606;
+  --color-fd-foreground: #b6c0cf;
+  --color-fd-primary: #4cf490;
+  --color-fd-primary-foreground: #060606;
+  --color-fd-card: #0d0d0e;
+  --color-fd-muted: #363840;
+  --color-fd-muted-foreground: #6f7987;
+  --color-fd-border: rgba(244, 246, 252, 0.11);
+  --color-fd-accent: #141416;
+  --color-fd-accent-foreground: #e6e9f0;
+  --color-fd-popover: #0d0d0e;
+  --color-fd-popover-foreground: #b6c0cf;
+  --color-fd-secondary: #141416;
+  --color-fd-secondary-foreground: #ced3e0;
+  --color-fd-ring: #4cf490;
+}
+
+/* ==========================================================================
+   Base styles
+   ========================================================================== */
+
+html {
+  background-color: #060606;
+}
+
+body {
+  font-family: 'Inter Variable', sans-serif;
+}
+
+/* ==========================================================================
+   Page title -- Fumadocs uses text-[1.75em], production is 39px/400
+   ========================================================================== */
+
+article > h1 {
+  font-size: var(--39px) !important;
+  line-height: var(--44px) !important;
+  font-weight: 400 !important;
+  letter-spacing: calc(var(--39px) * -0.04);
+}
+
+/* ==========================================================================
+   Prose -- markdown content heading overrides
+   (h1 renders at h3 size, h2 at h4, etc.)
+   Note: custom.css has .markdown h1-h5 selectors; these .prose selectors
+   are the Fumadocs equivalents and must be kept separately.
+   ========================================================================== */
+
+.prose h1 {
+  font-size: var(--39px) !important;
+  line-height: var(--44px) !important;
+  font-weight: 400;
+  letter-spacing: calc(var(--39px) * -0.04);
+  margin-top: 1rem;
+}
+.prose h2 {
+  font-size: var(--31px) !important;
+  line-height: var(--36px) !important;
+  font-weight: 400;
+  letter-spacing: calc(var(--31px) * -0.04);
+  margin-top: 2rem;
+}
+.prose h3 {
+  font-size: var(--25px) !important;
+  line-height: var(--28px) !important;
+  font-weight: 500;
+  letter-spacing: calc(var(--25px) * -0.04);
+  margin-top: 1.5rem;
+}
+.prose h4 {
+  font-size: var(--20px) !important;
+  line-height: var(--24px) !important;
+  font-weight: 600;
+  letter-spacing: calc(var(--20px) * -0.04);
+  margin-top: 1.25rem;
+}
+.prose h5 {
+  font-size: var(--16px) !important;
+  line-height: var(--24px) !important;
+  font-weight: 600;
+  letter-spacing: calc(var(--16px) * -0.04);
+  margin-top: 1.25rem;
+}
+
+/* ==========================================================================
+   Prose -- body text
+   ========================================================================== */
+
+.prose p {
+  font-weight: 350;
+  color: var(--clockworklabs-color-n3);
+  letter-spacing: -0.01em;
+  font-size: var(--16px);
+  line-height: 26.4px;
+  margin-bottom: 1.5rem;
+}
+
+/* ==========================================================================
+   Prose -- links
+   ========================================================================== */
+
+.prose a {
+  color: var(--clockworklabs-color-n3);
+  font-weight: 400;
+  text-decoration: underline;
+  text-decoration-skip-ink: none;
+  text-underline-offset: auto;
+}
+.prose a:hover {
+  color: var(--clockworklabs-color-n1);
+}
+
+/* Heading anchors -- don't underline heading text wrapped in anchor links */
+.prose h1 a[data-card],
+.prose h2 a[data-card],
+.prose h3 a[data-card],
+.prose h4 a[data-card],
+.prose h5 a[data-card],
+.prose h6 a[data-card] {
+  text-decoration: none;
+  color: inherit;
+}
+.prose h1 a[data-card]:hover,
+.prose h2 a[data-card]:hover,
+.prose h3 a[data-card]:hover,
+.prose h4 a[data-card]:hover,
+.prose h5 a[data-card]:hover,
+.prose h6 a[data-card]:hover {
+  color: inherit;
+}
+
+/* ==========================================================================
+   Prose -- inline code
+   ========================================================================== */
+
+/* Remove inner figure border inside tabbed code blocks to prevent double borders */
+[role="tabpanel"] figure.border {
+  border: none !important;
+}
+
+.prose p code,
+.prose li code {
+  color: var(--clockworklabs-code-color);
+  border: 1px solid var(--clockworklabs-code-border-color);
+  background-color: var(--clockworklabs-code-background-color);
+  padding: 0.125rem 0.25rem;
+}
+
+/* ==========================================================================
+   Tables -- Fumadocs version with rounded corners
+   (custom.css has a different table style without border-radius)
+   ========================================================================== */
+
+table {
+  display: table;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  letter-spacing: -0.01em;
+  margin-top: 40px;
+  margin-bottom: 40px;
+  font-size: 16px;
+  line-height: var(--24px);
+  color: var(--clockworklabs-color-white);
+  border: 1px solid var(--clockworklabs-color-n6);
+  border-radius: 8px;
+  overflow: hidden;
+}
+table th,
+table td {
+  border: none;
+  text-align: left;
+  padding: 12px 24px;
+}
+table thead {
+  background-color: var(--clockworklabs-color-shade1);
+  color: var(--clockworklabs-color-n4);
+}
+table thead tr {
+  border-bottom: none;
+}
+table tbody tr {
+  border-top: 1px solid var(--clockworklabs-color-n6);
+}
+table tbody tr td {
+  border-top: 1px solid var(--clockworklabs-color-n6);
+}
+table tbody tr:nth-child(2n) {
+  background-color: var(--clockworklabs-color-shade2);
+}
+table tbody td code {
+  background-color: var(--clockworklabs-code-background-color);
+  color: var(--clockworklabs-code-color);
+  border: 1px solid var(--clockworklabs-code-border-color);
+}
+table .table-accent {
+  color: var(--clockworklabs-color-green);
+}
+
+/* ==========================================================================
+   Admonition / Callout overrides for Fumadocs
+   ========================================================================== */
+
+[data-callout="info"] {
+  --callout-color: var(--clockworklabs-color-blue);
+  background-color: var(--clockworklabs-color-shade1);
+  border-color: var(--clockworklabs-color-blue);
+}
+[data-callout="warning"] {
+  --callout-color: var(--clockworklabs-color-orange);
+  background-color: var(--clockworklabs-color-shade1);
+  border-color: var(--clockworklabs-color-orange);
+}
+[data-callout="danger"] {
+  --callout-color: var(--clockworklabs-color-red);
+  background-color: var(--clockworklabs-color-shade1);
+  border-color: var(--clockworklabs-color-red);
+}
+[data-callout="tip"] {
+  --callout-color: var(--clockworklabs-color-green);
+  background-color: var(--clockworklabs-color-shade1);
+  border-color: var(--clockworklabs-color-green);
+}
+[data-callout="note"] {
+  --callout-color: var(--clockworklabs-color-n3);
+  background-color: var(--clockworklabs-color-shade1);
+  border-color: var(--clockworklabs-color-n3);
+}
+
+/* ==========================================================================
+   Top Navigation Bar
+   ========================================================================== */
+
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 57px;
+  padding: 8px 24px;
+  background-color: #060606;
+  border-bottom: 1px solid var(--clockworklabs-color-n6);
+}
+
+.topnav-logo img {
+  height: 32px;
+}
+
+.topnav-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--clockworklabs-color-n6);
+  background: var(--clockworklabs-color-shade2);
+  color: var(--clockworklabs-color-n4);
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 280px;
+  height: 36px;
+}
+
+.topnav-search:hover {
+  border-color: var(--clockworklabs-color-n5);
+}
+
+.topnav-search kbd {
+  margin-left: auto;
+  font-family: var(--clockworklabs-font-source);
+  font-size: 12px;
+  color: var(--clockworklabs-color-n5);
+}
+
+.topnav-spacer {
+  flex: 1;
+}
+
+.topnav-links {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.topnav-link {
+  font-family: var(--clockworklabs-font-source);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clockworklabs-color-n4);
+  text-decoration: none;
+}
+
+.topnav-link:hover {
+  color: var(--clockworklabs-color-n1);
+}
+
+.topnav-link:last-child {
+  border: 1px solid rgb(32, 33, 38);
+  border-radius: 4px;
+  padding: 10px;
+  color: rgb(244, 246, 252);
+  background: rgb(13, 13, 14);
+  font-weight: 700;
+  letter-spacing: -0.28px;
+}
+
+.topnav-link:last-child:hover {
+  background-color: var(--clockworklabs-color-n6);
+}
+
+/* Hide on mobile - use Fumadocs mobile nav instead */
+@media (max-width: 767px) {
+  .topnav {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+   Hide Fumadocs mobile TOC popover bar on desktop
+   ========================================================================== */
+
+@media (min-width: 768px) {
+  #nd-docs-layout > div:has(> header:not([id])) {
+    display: none !important;
+  }
+}
+
+/* ==========================================================================
+   Sidebar overrides -- match production Docusaurus measurements
+   ========================================================================== */
+
+/* Sidebar width -- override Fumadocs default (268px) */
+:root {
+  --fd-sidebar-width: 300px !important;
+}
+#nd-docs-layout {
+  --fd-sidebar-width: 300px !important;
+}
+
+/* All sidebar text uses Source Code Pro */
+#nd-sidebar {
+  font-family: var(--clockworklabs-font-source);
+  background-color: #060606;
+}
+
+/* Section headers ("Intro", "Core Concepts", "Developer Resources")
+   These are <p> separator elements inside the sidebar */
+#nd-sidebar p {
+  font-family: var(--clockworklabs-font-source);
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: rgb(54, 56, 64) !important;
+  letter-spacing: 0.96px !important;
+  text-transform: uppercase !important;
+  padding: 16px 8px 8px !important;
+  margin: 8px 0 0 !important;
+  line-height: 1.2;
+}
+
+/* Sidebar menu item links */
+#nd-sidebar a[data-active] {
+  font-family: var(--clockworklabs-font-source);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.7px;
+  color: rgba(182, 192, 207, 0.7);
+  padding: 8px;
+  line-height: 17.5px;
+}
+
+#nd-sidebar a[data-active]:hover {
+  color: rgba(230, 233, 240, 0.7);
+}
+
+/* Active sidebar item -- no green, subtle highlight */
+#nd-sidebar a[data-active="true"] {
+  color: rgba(230, 233, 240, 0.7) !important;
+  background: rgb(20, 20, 22) !important;
+  font-weight: 400 !important;
+}
+
+/* Remove highlight from parent/folder items -- only leaf pages should highlight */
+#nd-sidebar [data-collapsible] > a[data-active="true"] {
+  background: transparent !important;
+}
+
+/* Category / folder items (Quickstarts, Tutorials, Databases, etc.) */
+#nd-sidebar button {
+  font-family: var(--clockworklabs-font-source);
+  font-weight: 500;
+  color: rgb(206, 211, 224);
+  letter-spacing: -0.7px;
+}
+
+/* Also style collapsible trigger links used as categories */
+#nd-sidebar [data-collapsible] > a,
+#nd-sidebar [data-collapsible] > button {
+  font-weight: 500;
+  color: rgb(206, 211, 224);
+}
+
+/* Hide sidebar footer (theme toggle) -- production doesn't have it */
+#nd-sidebar > div:last-child:has(button[aria-label="Toggle Theme"]) {
+  display: none !important;
+}
+
+/* Hide sidebar collapse button -- production doesn't have it */
+#nd-sidebar button[aria-label="Collapse Sidebar"],
+button[aria-label="Collapse Sidebar"] {
+  display: none !important;
+}
+
+/* Hide the sidebar top section (logo/collapse row) on desktop -- it's empty after hiding collapse */
+#nd-sidebar > div:first-child {
+  display: none !important;
+}
+@media (max-width: 767px) {
+  #nd-sidebar > div:first-child {
+    display: flex !important;
+  }
+}
+
+/* ==========================================================================
+   Tab overrides -- match production Docusaurus tabs
+   ========================================================================== */
+
+[role="tablist"] button[aria-selected] {
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  padding: 8px 16px !important;
+}
+
+/* Active tab */
+[role="tablist"] button[aria-selected="true"],
+[role="tablist"] button[data-state="active"] {
+  color: var(--clockworklabs-color-green) !important;
+  border-bottom: 1px solid var(--clockworklabs-color-green) !important;
+}
+
+/* Inactive tab */
+[role="tablist"] button[aria-selected="false"],
+[role="tablist"] button[data-state="inactive"] {
+  color: rgb(82, 88, 96) !important;
+  border-bottom: 1px solid transparent !important;
+}
+
+/* ==========================================================================
+   TOC (right sidebar "On this page") -- match production
+   ========================================================================== */
+
+#nd-toc a {
+  font-size: 12.8px !important;
+}
+
+/* Active TOC link */
+#nd-toc a[data-active="true"] {
+  color: var(--clockworklabs-color-green) !important;
+}
+
+/* Inactive TOC link */
+#nd-toc a[data-active="false"] {
+  color: var(--clockworklabs-color-n4) !important;
+}
+
+/* TOC heading "On this page" -- match production's subtle style */
+#toc-title {
+  font-size: 12.8px !important;
+  color: var(--clockworklabs-color-n4) !important;
+}

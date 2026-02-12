@@ -1,0 +1,7 @@
+{
+  "title": "Deploy",
+  "pages": [
+    "00100-maincloud",
+    "00200-self-hosting"
+  ]
+}

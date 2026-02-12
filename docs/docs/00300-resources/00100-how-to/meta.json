@@ -1,0 +1,10 @@
+{
+  "title": "How To",
+  "pages": [
+    "00100-deploy",
+    "00200-pg-wire",
+    "00300-logging",
+    "00400-row-level-security",
+    "00500-reject-client-connections"
+  ]
+}

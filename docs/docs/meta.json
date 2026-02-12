@@ -1,0 +1,9 @@
+{
+  "root": true,
+  "pages": [
+    "00000-ask-ai",
+    "00100-intro",
+    "00200-core-concepts",
+    "00300-resources"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "title": "Core Concepts",
+  "pages": [
+    "00000-index",
+    "00100-databases",
+    "00200-functions",
+    "00300-tables",
+    "00400-subscriptions",
+    "00500-authentication",
+    "00600-client-sdk-languages"
+  ]
+}

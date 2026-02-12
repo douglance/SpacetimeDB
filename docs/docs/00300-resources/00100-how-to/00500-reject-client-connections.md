@@ -1,4 +1,5 @@
 ---
+title: Reject Client Connections
 slug: /how-to/reject-client-connections
 ---
 

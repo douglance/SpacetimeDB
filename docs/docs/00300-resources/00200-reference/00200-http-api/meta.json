@@ -1,0 +1,8 @@
+{
+  "title": "HTTP API",
+  "pages": [
+    "00100-authorization",
+    "00200-identity",
+    "00300-database"
+  ]
+}

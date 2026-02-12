@@ -1,0 +1,11 @@
+{
+  "title": "Getting Started",
+  "pages": [
+    "00100-getting-started",
+    "00200-what-is-spacetimedb",
+    "00250-zen-of-spacetimedb",
+    "00300-language-support",
+    "00400-key-architecture",
+    "00500-faq"
+  ]
+}

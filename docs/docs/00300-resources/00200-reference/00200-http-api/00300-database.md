@@ -1,4 +1,5 @@
 ---
+title: /v1/database
 slug: /http/database
 ---
 

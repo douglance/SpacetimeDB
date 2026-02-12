@@ -1,0 +1,10 @@
+{
+  "title": "References",
+  "pages": [
+    "00100-cli-reference",
+    "00200-http-api",
+    "00300-internals",
+    "00400-sql-reference",
+    "00500-appendix"
+  ]
+}

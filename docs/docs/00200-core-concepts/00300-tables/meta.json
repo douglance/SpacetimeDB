@@ -1,0 +1,10 @@
+{
+  "title": "Tables",
+  "pages": [
+    "00200-columns",
+    "00300-indexes",
+    "00400-access-permissions",
+    "00500-scheduled-tables",
+    "00600-performance"
+  ]
+}
