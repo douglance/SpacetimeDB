@@ -20,6 +20,7 @@ SpacetimeDB modules define your database schema and server-side business logic. 
 - **[C#](../../00200-core-concepts/00600-clients/00600-csharp-reference.md)** - [(Quickstart)](../00200-quickstarts/00600-c-sharp.md)
 - **[TypeScript](../../00200-core-concepts/00600-clients/00700-typescript-reference.md)** - [(Quickstart)](../00200-quickstarts/00400-typescript.md)
 - **[Unreal Engine](../../00200-core-concepts/00600-clients/00800-unreal-reference.md)** - C++ and Blueprint support [(Tutorial)](../00300-tutorials/00400-unreal-tutorial/00200-part-1.md)
+- **[Swift](../../00200-core-concepts/00600-clients/00900-swift-reference.md)** - Native Apple platform support (Early Development)
 
 ### Unity
 

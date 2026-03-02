@@ -5,12 +5,14 @@ pub mod cpp;
 pub mod csharp;
 pub mod rust;
 pub mod typescript;
+pub mod swift;
 pub mod unrealcpp;
 mod util;
 
 pub use self::csharp::Csharp;
 pub use self::rust::Rust;
 pub use self::typescript::TypeScript;
+pub use self::swift::Swift;
 pub use self::unrealcpp::UnrealCpp;
 pub use util::private_table_names;
 pub use util::CodegenVisibility;

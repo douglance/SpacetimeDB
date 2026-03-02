@@ -83,6 +83,22 @@ Replace:
 - **YOUR_MODULE_NAME** with the name of your Unreal module, typically the name of the project
 
 </TabItem>
+<TabItem value="swift" label="Swift">
+
+```bash
+mkdir -p Sources/module_bindings
+spacetime generate --lang swift --out-dir Sources/module_bindings --module-path PATH-TO-MODULE-DIRECTORY
+```
+
+This generates Swift files in `Sources/module_bindings/`. Import them in your client:
+
+```swift
+import SpacetimeDBSwift
+```
+
+Replace **PATH-TO-MODULE-DIRECTORY** with the path to your module's directory.
+
+</TabItem>
 </Tabs>
 
 ## What Gets Generated
@@ -363,7 +379,7 @@ Once you've generated the bindings, you're ready to connect to your database and
 
 - [Connecting to SpacetimeDB](./00300-connection.md) for establishing a connection
 - [SDK API Reference](./00400-sdk-api.md) for using the generated bindings
-- Language-specific references: [Rust](./00500-rust-reference.md), [C#](./00600-csharp-reference.md), [TypeScript](./00700-typescript-reference.md), [Unreal](./00800-unreal-reference.md)
+- Language-specific references: [Rust](./00500-rust-reference.md), [C#](./00600-csharp-reference.md), [TypeScript](./00700-typescript-reference.md), [Unreal](./00800-unreal-reference.md), [Swift](./00900-swift-reference.md)
 
 ## Troubleshooting
 

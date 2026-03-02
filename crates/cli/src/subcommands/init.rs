@@ -90,6 +90,7 @@ pub enum ClientLanguage {
     Rust,
     Csharp,
     TypeScript,
+    Swift,
 }
 
 impl ClientLanguage {
@@ -98,6 +99,7 @@ impl ClientLanguage {
             ClientLanguage::Rust => "rust",
             ClientLanguage::Csharp => "csharp",
             ClientLanguage::TypeScript => "typescript",
+            ClientLanguage::Swift => "swift",
         }
     }
 
@@ -106,6 +108,7 @@ impl ClientLanguage {
             "rust" => Ok(Some(ClientLanguage::Rust)),
             "csharp" | "c#" => Ok(Some(ClientLanguage::Csharp)),
             "typescript" => Ok(Some(ClientLanguage::TypeScript)),
+            "swift" => Ok(Some(ClientLanguage::Swift)),
             _ => Err(anyhow!("Unknown client language: {}", s)),
         }
     }
@@ -1326,6 +1329,9 @@ fn init_builtin(config: &TemplateConfig, project_path: &Path, is_server_only: bo
             }
             Some(ClientLanguage::Csharp) => {
                 update_csproj_client_to_nuget(project_path)?;
+            }
+            Some(ClientLanguage::Swift) => {
+                // No additional setup needed for Swift client projects.
             }
             None => {}
         }

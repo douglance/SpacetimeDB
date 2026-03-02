@@ -13,6 +13,7 @@ SpacetimeDB provides client SDKs for multiple languages:
 - [C#](./00600-clients/00600-csharp-reference.md) - [(Quickstart)](../00100-intro/00200-quickstarts/00600-c-sharp.md)
 - [TypeScript](./00600-clients/00700-typescript-reference.md) - [(Quickstart)](../00100-intro/00200-quickstarts/00400-typescript.md)
 - [Unreal](./00600-clients/00800-unreal-reference.md) - [(Tutorial)](../00100-intro/00300-tutorials/00400-unreal-tutorial/index.md)
+- [Swift](./00600-clients/00900-swift-reference.md) - Native Apple platform support (Early Development)
 
 ## Getting Started
 
@@ -83,7 +84,7 @@ New to SpacetimeDB client development? Follow this progression:
 1. **[Generate Client Bindings](./00600-clients/00200-codegen.md)** - Create type-safe interfaces from your module
 2. **[Connect to SpacetimeDB](./00600-clients/00300-connection.md)** - Establish a connection and understand the lifecycle
 3. **[Use the SDK API](./00600-clients/00400-sdk-api.md)** - Learn about subscriptions, reducers, and callbacks
-4. **Language Reference** - Dive into language-specific details: [Rust](./00600-clients/00500-rust-reference.md), [C#](./00600-clients/00600-csharp-reference.md), [TypeScript](./00600-clients/00700-typescript-reference.md)
+4. **Language Reference** - Dive into language-specific details: [Rust](./00600-clients/00500-rust-reference.md), [C#](./00600-clients/00600-csharp-reference.md), [TypeScript](./00600-clients/00700-typescript-reference.md), [Swift](./00600-clients/00900-swift-reference.md)
 
 ## Next Steps
 

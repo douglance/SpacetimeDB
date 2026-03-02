@@ -6,7 +6,7 @@ use clap::Arg;
 use clap::ArgAction::{Set, SetTrue};
 use fs_err as fs;
 use spacetimedb_codegen::{
-    generate, private_table_names, CodegenOptions, CodegenVisibility, Csharp, Lang, OutputFile, Rust, TypeScript,
+    generate, private_table_names, CodegenOptions, CodegenVisibility, Csharp, Lang, OutputFile, Rust, Swift, TypeScript,
     UnrealCpp, AUTO_GENERATED_PREFIX,
 };
 use spacetimedb_lib::de::serde::DeserializeWrapper;
@@ -395,6 +395,9 @@ fn detect_default_language(client_project_dir: &Path) -> anyhow::Result<Language
             return Ok(Language::Csharp);
         }
     }
+    if client_project_dir.join("Package.swift").exists() {
+        return Ok(Language::Swift);
+    }
 
     anyhow::bail!(
         "Could not auto-detect client language from '{}'. \
@@ -409,6 +412,7 @@ fn language_cli_name(lang: Language) -> &'static str {
         Language::Csharp => "csharp",
         Language::TypeScript => "typescript",
         Language::UnrealCpp => "unrealcpp",
+        Language::Swift => "swift",
     }
 }
 
@@ -417,6 +421,7 @@ pub fn default_out_dir_for_language(lang: Language) -> Option<PathBuf> {
         Language::Rust | Language::TypeScript => Some(PathBuf::from("src/module_bindings")),
         Language::Csharp => Some(PathBuf::from("module_bindings")),
         Language::UnrealCpp => None,
+        Language::Swift => Some(PathBuf::from("Sources/ModuleBindings")),
     }
 }
 
@@ -517,6 +522,7 @@ pub async fn run_prepared_generate_configs(
             }
             Language::Rust => &Rust,
             Language::TypeScript => &TypeScript,
+            Language::Swift => &Swift,
         };
 
         for OutputFile { filename, code } in generate(&module, gen_lang, &options) {
@@ -679,11 +685,13 @@ pub enum Language {
     Rust,
     #[serde(alias = "uecpp", alias = "ue5cpp", alias = "unreal")]
     UnrealCpp,
+    #[serde(alias = "sw")]
+    Swift,
 }
 
 impl clap::ValueEnum for Language {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Csharp, Self::TypeScript, Self::Rust, Self::UnrealCpp]
+        &[Self::Csharp, Self::TypeScript, Self::Rust, Self::UnrealCpp, Self::Swift]
     }
     fn to_possible_value(&self) -> Option<PossibleValue> {
         Some(match self {
@@ -691,6 +699,7 @@ impl clap::ValueEnum for Language {
             Self::TypeScript => clap::builder::PossibleValue::new("typescript").aliases(["ts", "TS"]),
             Self::Rust => clap::builder::PossibleValue::new("rust").aliases(["rs", "RS"]),
             Self::UnrealCpp => PossibleValue::new("unrealcpp").aliases(["uecpp", "ue5cpp", "unreal"]),
+            Self::Swift => PossibleValue::new("swift").aliases(["sw"]),
         })
     }
 }
@@ -703,6 +712,7 @@ impl Language {
             Language::Csharp => "C#",
             Language::TypeScript => "TypeScript",
             Language::UnrealCpp => "Unreal C++",
+            Language::Swift => "Swift",
         }
     }
 
@@ -714,6 +724,9 @@ impl Language {
                 // TODO: implement formatting.
             }
             Language::UnrealCpp => {
+                // TODO: implement formatting.
+            }
+            Language::Swift => {
                 // TODO: implement formatting.
             }
         }
